@@ -1,3 +1,4 @@
+import os
 import asyncio
 import random
 import string
@@ -23,8 +24,8 @@ from telegram.ext import (
 )
 
 # Конфигурация
-BOT_TOKEN = "8215603257:AAGxxnrQFuGJwO5js4mAV00Yrxz5MORea9I"
-ADMIN_IDS = [8259635146, 7993168159]  #админы
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+ADMIN_IDS = [8259635146, 7993168159]  # админы
 SUPPORT_USERNAME = "@LEOLST"
 
 # Способы оплаты
@@ -270,14 +271,10 @@ def get_games_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 def get_payment_methods_keyboard():
-    keyboard = []
-    methods_list = list(PAYMENT_METHODS.items())
-    for i in range(0, len(methods_list), 2):
-        row = []
-        for method_id, method_name in methods_list[i:i+2]:
-            row.append(InlineKeyboardButton(method_name, callback_data=f"method_{method_id}"))
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="deposit_cancel")])
+    keyboard = [
+        [InlineKeyboardButton("🏦 Сбербанк", callback_data="method_sber")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="deposit_cancel")]
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 def get_banks_keyboard():
@@ -554,13 +551,10 @@ async def select_payment_method(update: Update, context: ContextTypes.DEFAULT_TY
         await finances_command_callback(update, context)
         return ConversationHandler.END
     
-    method_id = query.data.replace("method_", "")
-    context.user_data['payment_method'] = method_id
-    
-    method_name = PAYMENT_METHODS.get(method_id, "Неизвестный способ")
+    context.user_data['payment_method'] = 'sber'
     
     await query.edit_message_text(
-        f"💳 *Пополнение через {method_name}*\n\nПожалуйста, введите сумму, которую желаете пополнить:\n\n*Минимальная сумма:* 10 ₽",
+        f"💳 *Пополнение через Сбербанк*\n\nПожалуйста, введите сумму, которую желаете пополнить:\n\n*Минимальная сумма:* 10 ₽",
         parse_mode='Markdown'
     )
     
@@ -581,8 +575,7 @@ async def handle_deposit_amount_text(update: Update, context: ContextTypes.DEFAU
             return ENTER_DEPOSIT_AMOUNT
         
         context.user_data['deposit_amount'] = amount
-        method_id = context.user_data.get('payment_method', 'sber')
-        method_name = PAYMENT_METHODS.get(method_id, "Неизвестный способ")
+        method_name = "Сбербанк"
         
         await update.message.reply_text(
             f"💳 *Подтверждение пополнения*\n\nСпособ оплаты: *{method_name}*\nСумма: *{amount:.2f} ₽*\n\nВерно?",
@@ -613,16 +606,12 @@ async def confirm_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     amount = context.user_data.get('deposit_amount', 0)
-    method_id = context.user_data.get('payment_method', 'sber')
-    method_name = PAYMENT_METHODS.get(method_id, "Неизвестный способ")
-    details = PAYMENT_DETAILS.get(method_id, PAYMENT_DETAILS['sber'])
+    method_name = "Сбербанк"
+    details = PAYMENT_DETAILS.get('sber')
     
     invoice = generate_invoice()
     set_deposit_invoice(user_id, invoice, amount, method_name)
     add_transaction(user_id, 'deposit', amount, 'pending', invoice, details['number'], method_name)
-    
-    payment_time = 15 * 60  # 15 минут в секундах
-    end_time = datetime.now() + timedelta(seconds=payment_time)
     
     payment_text = f"""
 💳 *Счет на оплату создан*
@@ -680,19 +669,7 @@ async def confirm_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
     
-    # Таймер временно отключен
-    # context.job_queue.run_once(
-    #     deposit_timeout,
-    #     payment_time,
-    #     data={'user_id': user_id, 'invoice': invoice, 'chat_id': query.message.chat_id, 'message_id': query.message.message_id},
-    #     name=f"deposit_{invoice}"
-    # )
-
-    # Задача обновления таймера временно отключена
-    # asyncio.create_task(update_deposit_timer(context, user_id, invoice, end_time, query.message.chat_id, query.message.message_id))
-    
     return ConversationHandler.END
-
 
 # Вывод средств
 async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -719,7 +696,6 @@ async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return ENTER_WITHDRAW_AMOUNT
-
 
 async def enter_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -759,7 +735,6 @@ async def enter_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return ENTER_WITHDRAW_AMOUNT
 
-
 async def select_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -794,7 +769,6 @@ async def select_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return ENTER_DETAILS
-
 
 async def enter_withdraw_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     details = update.message.text.strip()
@@ -832,7 +806,6 @@ async def enter_withdraw_details(update: Update, context: ContextTypes.DEFAULT_T
     )
     
     return CONFIRM_WITHDRAW
-
 
 async def confirm_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1699,89 +1672,104 @@ async def rules_command_callback(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 def main():
+    # Проверка токена
+    if not BOT_TOKEN:
+        print("❌ ОШИБКА: BOT_TOKEN не найден!")
+        print("Добавь переменную BOT_TOKEN в Railway Variables")
+        return
+    
     # Инициализация базы данных
     init_db()
     
-    # Создание приложения
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Обработчики команд
-    application.add_handler(CommandHandler("start", start))
-    
-    # ConversationHandler для пополнения
-    deposit_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(deposit_start, pattern="^deposit$")],
-        states={
-            SELECT_PAYMENT_METHOD: [CallbackQueryHandler(select_payment_method, pattern="^(method_|deposit_cancel)")],
-            ENTER_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_deposit_amount_text)],
-            CONFIRM_DEPOSIT: [CallbackQueryHandler(confirm_deposit, pattern="^(confirm|cancel)$")]
-        },
-        fallbacks=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(show_main_menu_inline, pattern="^main_menu_inline$")
-        ],
-        name="deposit_conversation",
-        persistent=False
-    )
-    
-    # ConversationHandler для вывода
-    withdraw_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(withdraw_start, pattern="^withdraw$")],
-        states={
-            ENTER_WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_withdraw_amount)],
-            SELECT_BANK: [CallbackQueryHandler(select_bank, pattern="^(bank_|withdraw_cancel)")],
-            ENTER_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_withdraw_details)],
-            CONFIRM_WITHDRAW: [CallbackQueryHandler(confirm_withdraw, pattern="^(confirm|cancel)$")]
-        },
-        fallbacks=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(show_main_menu_inline, pattern="^main_menu_inline$")
-        ],
-        name="withdraw_conversation",
-        persistent=False
-    )
-    
-    # ConversationHandler для ставок
-    bet_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(game_dice, pattern="^game_dice$"),
-                     CallbackQueryHandler(game_slots, pattern="^game_slots$")],
-        states={
-            ENTER_BET_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_bet_amount)]
-        },
-        fallbacks=[
-            CommandHandler("start", start),
-            CallbackQueryHandler(show_main_menu_inline, pattern="^main_menu_inline$")
-        ],
-        name="bet_conversation",
-        persistent=False
-    )
-    
-    # ConversationHandler должны быть добавлены ПЕРВЫМИ!
-    application.add_handler(deposit_conv)
-    application.add_handler(withdraw_conv)
-    application.add_handler(bet_conv)
-    
-    # Обработчики игр
-    application.add_handler(CallbackQueryHandler(place_bet, pattern="^place_bet_"))
-    application.add_handler(CallbackQueryHandler(play_again, pattern="^(play_again_|same_bet_)"))
-    application.add_handler(CallbackQueryHandler(quick_game, pattern="^quick_game$"))
-    
-    # Обработчики администраторов
-    application.add_handler(CallbackQueryHandler(admin_approve_deposit, pattern="^admin_approve_"))
-    application.add_handler(CallbackQueryHandler(admin_reject_deposit, pattern="^admin_reject_"))
-    application.add_handler(CallbackQueryHandler(admin_approve_withdraw, pattern="^admin_withdraw_approve_"))
-    application.add_handler(CallbackQueryHandler(admin_reject_withdraw, pattern="^admin_withdraw_reject_"))
-    application.add_handler(CallbackQueryHandler(cancel_withdraw, pattern="^cancel_withdraw_"))
-    
-    # Общие обработчики callback
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    
-    # Обработчик текстовых сообщений должен быть ПОСЛЕ ConversationHandler
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
-    # Запуск бота
-    print("🤖 Бот запущен!")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        # Создание приложения
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # ConversationHandler для пополнения
+        deposit_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(deposit_start, pattern="^deposit$")],
+            states={
+                SELECT_PAYMENT_METHOD: [CallbackQueryHandler(select_payment_method, pattern="^(method_|deposit_cancel)")],
+                ENTER_DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_deposit_amount_text)],
+                CONFIRM_DEPOSIT: [CallbackQueryHandler(confirm_deposit, pattern="^(confirm|cancel)$")]
+            },
+            fallbacks=[
+                CommandHandler("start", start),
+                CallbackQueryHandler(show_main_menu_inline, pattern="^main_menu_inline$")
+            ],
+            name="deposit_conversation",
+            persistent=False
+        )
+        
+        # ConversationHandler для вывода
+        withdraw_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(withdraw_start, pattern="^withdraw$")],
+            states={
+                ENTER_WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_withdraw_amount)],
+                SELECT_BANK: [CallbackQueryHandler(select_bank, pattern="^(bank_|withdraw_cancel)")],
+                ENTER_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_withdraw_details)],
+                CONFIRM_WITHDRAW: [CallbackQueryHandler(confirm_withdraw, pattern="^(confirm|cancel)$")]
+            },
+            fallbacks=[
+                CommandHandler("start", start),
+                CallbackQueryHandler(show_main_menu_inline, pattern="^main_menu_inline$")
+            ],
+            name="withdraw_conversation",
+            persistent=False
+        )
+        
+        # ConversationHandler для ставок
+        bet_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(game_dice, pattern="^game_dice$"),
+                         CallbackQueryHandler(game_slots, pattern="^game_slots$")],
+            states={
+                ENTER_BET_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_bet_amount)]
+            },
+            fallbacks=[
+                CommandHandler("start", start),
+                CallbackQueryHandler(show_main_menu_inline, pattern="^main_menu_inline$")
+            ],
+            name="bet_conversation",
+            persistent=False
+        )
+        
+        # ConversationHandler должны быть добавлены ПЕРВЫМИ!
+        application.add_handler(deposit_conv)
+        application.add_handler(withdraw_conv)
+        application.add_handler(bet_conv)
+        
+        # Обработчики команд
+        application.add_handler(CommandHandler("start", start))
+        
+        # Обработчики игр
+        application.add_handler(CallbackQueryHandler(place_bet, pattern="^place_bet_"))
+        application.add_handler(CallbackQueryHandler(play_again, pattern="^(play_again_|same_bet_)"))
+        application.add_handler(CallbackQueryHandler(quick_game, pattern="^quick_game$"))
+        
+        # Обработчики администраторов
+        application.add_handler(CallbackQueryHandler(admin_approve_deposit, pattern="^admin_approve_"))
+        application.add_handler(CallbackQueryHandler(admin_reject_deposit, pattern="^admin_reject_"))
+        application.add_handler(CallbackQueryHandler(admin_approve_withdraw, pattern="^admin_withdraw_approve_"))
+        application.add_handler(CallbackQueryHandler(admin_reject_withdraw, pattern="^admin_withdraw_reject_"))
+        application.add_handler(CallbackQueryHandler(cancel_withdraw, pattern="^cancel_withdraw_"))
+        
+        # Общие обработчики callback
+        application.add_handler(CallbackQueryHandler(handle_callback))
+        
+        # Обработчик текстовых сообщений должен быть ПОСЛЕ ConversationHandler
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+        
+        # Запуск бота
+        print("🤖 Бот запускается...")
+        print(f"✅ Токен найден: {'да' if BOT_TOKEN else 'нет'}")
+        print("✅ База данных инициализирована")
+        
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+    except Exception as e:
+        print(f"❌ Ошибка при запуске: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == '__main__':
     main()
